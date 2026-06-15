@@ -1,0 +1,12 @@
+# AI 配置文件（包含 API Key，禁止提交）
+ai-config.js
+
+# 个人档案与输出规则（因人而异，禁止提交）
+rules/
+skills/
+
+# 工具元数据
+.reasonix/
+
+# 工具元数据
+.reasonix/

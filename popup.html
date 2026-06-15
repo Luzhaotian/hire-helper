@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>招聘助手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- 主界面 -->
+  <div id="mainView" class="view active">
+    <header class="header">
+      <div class="logo">🎯</div>
+      <h1>招聘助手</h1>
+      <button id="settingsBtn" class="icon-btn" title="设置">⚙️</button>
+    </header>
+
+    <!-- AI 开关 -->
+    <div id="aiToggle" class="ai-toggle-bar">
+      <div class="ai-toggle-info">
+        <span class="ai-toggle-label">🤖 AI 增强</span>
+        <span id="aiStatus" class="ai-status-badge">未配置</span>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="aiEnabled">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+
+    <!-- 快捷操作区 -->
+    <div class="actions">
+      <button id="scanBtn" class="primary-btn" title="识别当前页面公司信息">
+        <span class="btn-icon">🔍</span>
+        <span>识别信息</span>
+      </button>
+      <button id="screenshotBtn" class="secondary-btn" title="截图识别">
+        <span class="btn-icon">📸</span>
+        <span>截图识别</span>
+      </button>
+      <button id="pasteBtn" class="secondary-btn" title="粘贴文本识别">
+        <span class="btn-icon">📋</span>
+        <span>粘贴文本</span>
+      </button>
+    </div>
+
+    <!-- 公司信息展示区 -->
+    <div id="companyInfo" class="info-card hidden">
+      <div class="card-header">
+        <span class="card-title">📋 公司信息</span>
+        <span id="platformBadge" class="badge"></span>
+      </div>
+      <div class="info-grid">
+        <div class="info-item">
+          <label>公司名称</label>
+          <span id="companyName">-</span>
+        </div>
+        <div class="info-item">
+          <label>职位</label>
+          <span id="jobTitle">-</span>
+        </div>
+        <div class="info-item full">
+          <label>公司介绍 / 岗位要求</label>
+          <p id="companyDesc">-</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 生成结果区 -->
+    <div id="resultArea" class="hidden">
+      <div class="result-header">
+        <span class="card-title">✨ 生成的话术</span>
+        <span id="resultCount" class="badge">0 条</span>
+      </div>
+      <div id="resultList" class="result-list">
+        <!-- 动态填充 -->
+      </div>
+      <button id="refreshBtn" class="ghost-btn">🔄 换一批</button>
+    </div>
+
+    <!-- 未识别到信息的提示 -->
+    <div id="noResult" class="empty-state hidden">
+      <div class="empty-icon">😅</div>
+      <p>未能自动识别到公司信息</p>
+      <p class="hint">你可以尝试：</p>
+      <ul>
+        <li>📸 截图识别</li>
+        <li>📋 粘贴文本</li>
+        <li>⚙️ 检查设置</li>
+      </ul>
+    </div>
+
+    <!-- 加载动画 -->
+    <div id="loading" class="hidden">
+      <div class="spinner"></div>
+      <p>正在识别中...</p>
+    </div>
+  </div>
+
+  <!-- 粘贴文本视图 -->
+  <div id="pasteView" class="view">
+    <header class="header">
+      <button id="pasteBackBtn" class="icon-btn">←</button>
+      <h1>粘贴文本</h1>
+      <div></div>
+    </header>
+    <textarea id="pasteInput" placeholder="在这里粘贴公司介绍或职位描述...&#10;&#10;例如：&#10;我们是一家专注于人工智能领域的创业公司，团队来自BAT...&#10;职位要求：&#10;1. 熟悉Python、TensorFlow&#10;2. 有NLP或推荐系统经验&#10;3. ..."></textarea>
+    <button id="pasteConfirmBtn" class="primary-btn">
+      <span class="btn-icon">🚀</span>
+      <span>识别并生成话术</span>
+    </button>
+  </div>
+
+  <!-- 截图识别视图 -->
+  <div id="screenshotView" class="view">
+    <header class="header">
+      <button id="screenshotBackBtn" class="icon-btn">←</button>
+      <h1>截图识别</h1>
+      <div></div>
+    </header>
+    <div class="screenshot-area">
+      <div id="screenshotPreview" class="preview-placeholder">
+        <div class="empty-icon">📷</div>
+        <p>点击下方按钮截图</p>
+      </div>
+      <img id="screenshotImage" class="hidden" alt="截图">
+      <div class="screenshot-actions">
+        <button id="captureBtn" class="primary-btn">
+          <span class="btn-icon">📸</span>
+          <span>截取当前页面</span>
+        </button>
+        <button id="uploadBtn" class="secondary-btn">
+          <span class="btn-icon">📁</span>
+          <span>上传图片</span>
+        </button>
+        <input type="file" id="fileInput" accept="image/*" class="hidden">
+      </div>
+      <div id="screenshotStatus" class="hidden">
+        <div class="spinner small"></div>
+        <span>正在识别图片内容...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置视图 -->
+  <div id="settingsView" class="view">
+    <header class="header">
+      <button id="settingsBackBtn" class="icon-btn">←</button>
+      <h1>设置 - 我的能力</h1>
+      <button id="saveBtn" class="icon-btn save">💾</button>
+    </header>
+
+    <div class="settings-content">
+      <div class="setting-section">
+        <label class="setting-label">🏷️ 技能标签</label>
+        <p class="setting-hint">添加你的核心技能，用于匹配公司需求</p>
+        <div id="skillsContainer" class="tag-container">
+          <!-- 动态填充 -->
+        </div>
+        <div class="tag-input-row">
+          <input type="text" id="skillInput" class="tag-input" placeholder="输入技能，如: React, Python, AI...">
+          <button id="addSkillBtn" class="add-btn">+</button>
+        </div>
+        <div class="quick-tags">
+          <span class="quick-tag" data-tag="React">React</span>
+          <span class="quick-tag" data-tag="Vue">Vue</span>
+          <span class="quick-tag" data-tag="Python">Python</span>
+          <span class="quick-tag" data-tag="Java">Java</span>
+          <span class="quick-tag" data-tag="Go">Go</span>
+          <span class="quick-tag" data-tag="AI">AI</span>
+          <span class="quick-tag" data-tag="大模型">大模型</span>
+          <span class="quick-tag" data-tag="Flutter">Flutter</span>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <label class="setting-label">⭐ 亮点描述</label>
+        <p class="setting-hint">写上你最突出的优势（每条≤15字，将直接用于话术生成）</p>
+        <div id="highlightsContainer" class="tag-container">
+          <!-- 动态填充 -->
+        </div>
+        <div class="tag-input-row">
+          <input type="text" id="highlightInput" class="tag-input" placeholder="如: 3年大厂经验, 有开源项目...">
+          <button id="addHighlightBtn" class="add-btn">+</button>
+        </div>
+        <div class="quick-tags">
+          <span class="quick-tag" data-tag="3年大厂经验">3年大厂经验</span>
+          <span class="quick-tag" data-tag="有开源项目">有开源项目</span>
+          <span class="quick-tag" data-tag="全栈开发能力">全栈开发能力</span>
+          <span class="quick-tag" data-tag="带过团队">带过团队</span>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <label class="setting-label">📝 自定义模板</label>
+        <p class="setting-hint">高级功能：使用占位符自定义话术模板<br>
+          可用: <code>{company}</code> <code>{advantage}</code> <code>{skill}</code> <code>{intent}</code>
+        </p>
+        <div id="templatesContainer" class="template-list">
+          <!-- 动态填充 -->
+        </div>
+        <div class="tag-input-row">
+          <input type="text" id="templateInput" class="tag-input" placeholder="如: {company}技术栈正好匹配我的{skill}">
+          <button id="addTemplateBtn" class="add-btn">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="ai-config.js"></script>
+  <script src="ai-service.js"></script>
+  <script src="generator.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
