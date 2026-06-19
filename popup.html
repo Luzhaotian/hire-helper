@@ -47,7 +47,10 @@
     <div id="companyInfo" class="info-card hidden">
       <div class="card-header">
         <span class="card-title">📋 公司信息</span>
-        <span id="platformBadge" class="badge"></span>
+        <div class="badge-row">
+          <span id="sourceBadge" class="badge source-badge hidden"></span>
+          <span id="platformBadge" class="badge"></span>
+        </div>
       </div>
       <div class="info-grid">
         <div class="info-item">
@@ -63,6 +66,37 @@
           <p id="companyDesc">-</p>
         </div>
       </div>
+      <!-- 页面获取的原始识别内容 -->
+      <div id="rawContentArea" class="hidden">
+        <div class="raw-content-header" id="rawContentToggle">
+          <span>📄 页面抓取的原始内容</span>
+          <span class="raw-toggle-icon">▼</span>
+        </div>
+        <pre id="rawContent" class="raw-content"></pre>
+      </div>
+    </div>
+
+    <!-- 截图显示区（从截图视图带回） -->
+    <div id="mainScreenshotArea" class="hidden">
+      <div class="card-header">
+        <span class="card-title">🖼️ 截图预览</span>
+        <button id="removeScreenshotBtn" class="icon-btn" title="关闭">✕</button>
+      </div>
+      <img id="mainScreenshotImage" alt="截图" style="max-width:100%;max-height:200px;border-radius:8px;margin-bottom:8px;">
+      <button id="analyzeImageBtn" class="primary-btn">
+        <span class="btn-icon">🤖</span>
+        <span>AI 识别图片</span>
+      </button>
+    </div>
+
+    <!-- 模型不支持图片识别的警告 -->
+    <div id="visionWarning" class="hidden" style="background:rgba(253,203,110,0.1);border:1px solid rgba(253,203,110,0.3);border-radius:8px;padding:12px;margin-bottom:12px;color:#fdcb6e;font-size:12px;line-height:1.6;">
+      ⚠️ 当前模型 <strong id="visionWarningModel"></strong> 不支持图片识别功能，请使用以下替代方案：
+      <ul style="margin:6px 0 0 16px;padding:0;">
+        <li>📋 通过「粘贴文本」输入公司信息</li>
+        <li>🔍 使用「识别信息」直接扫描页面</li>
+        <li>⚙️ 在设置中更换支持图片识别的模型（如 gpt-4o / claude 等）</li>
+      </ul>
     </div>
 
     <!-- 生成结果区 -->
@@ -134,6 +168,10 @@
         </button>
         <input type="file" id="fileInput" accept="image/*" class="hidden">
       </div>
+      <button id="goHomeAnalyzeBtn" class="primary-btn hidden">
+        <span class="btn-icon">🏠</span>
+        <span>去首页解析</span>
+      </button>
       <div id="screenshotStatus" class="hidden">
         <div class="spinner small"></div>
         <span>正在识别图片内容...</span>
@@ -150,6 +188,24 @@
     </header>
 
     <div class="settings-content">
+      <div class="setting-section">
+        <label class="setting-label">🔑 AI 配置</label>
+        <p class="setting-hint">填写 API Key 启用 AI 生成话术，留空则使用 ai-config.js 中的配置</p>
+
+        <div class="ai-config-field">
+          <label class="field-label">API Key</label>
+          <input type="password" id="aiApiKey" class="tag-input" placeholder="sk-xxx 或其他 API Key">
+        </div>
+        <div class="ai-config-field">
+          <label class="field-label">API 地址</label>
+          <input type="text" id="aiBaseUrl" class="tag-input" placeholder="https://api.openai.com/v1">
+        </div>
+        <div class="ai-config-field">
+          <label class="field-label">模型名称</label>
+          <input type="text" id="aiModel" class="tag-input" placeholder="gpt-4o-mini">
+        </div>
+      </div>
+
       <div class="setting-section">
         <label class="setting-label">🏷️ 技能标签</label>
         <p class="setting-hint">添加你的核心技能，用于匹配公司需求</p>

@@ -17,6 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const els = {
     aiEnabled: $('#aiEnabled'),
     aiStatus: $('#aiStatus'),
+    aiApiKey: $('#aiApiKey'),
+    aiBaseUrl: $('#aiBaseUrl'),
+    aiModel: $('#aiModel'),
     scanBtn: $('#scanBtn'),
     screenshotBtn: $('#screenshotBtn'),
     pasteBtn: $('#pasteBtn'),
@@ -26,6 +29,10 @@ document.addEventListener('DOMContentLoaded', () => {
     jobTitle: $('#jobTitle'),
     companyDesc: $('#companyDesc'),
     platformBadge: $('#platformBadge'),
+    sourceBadge: $('#sourceBadge'),
+    rawContentArea: $('#rawContentArea'),
+    rawContent: $('#rawContent'),
+    rawContentToggle: $('#rawContentToggle'),
     resultArea: $('#resultArea'),
     resultList: $('#resultList'),
     resultCount: $('#resultCount'),
@@ -42,6 +49,13 @@ document.addEventListener('DOMContentLoaded', () => {
     screenshotImage: $('#screenshotImage'),
     screenshotPreview: $('#screenshotPreview'),
     screenshotStatus: $('#screenshotStatus'),
+    goHomeAnalyzeBtn: $('#goHomeAnalyzeBtn'),
+    mainScreenshotArea: $('#mainScreenshotArea'),
+    mainScreenshotImage: $('#mainScreenshotImage'),
+    analyzeImageBtn: $('#analyzeImageBtn'),
+    removeScreenshotBtn: $('#removeScreenshotBtn'),
+    visionWarning: $('#visionWarning'),
+    visionWarningModel: $('#visionWarningModel'),
     settingsBackBtn: $('#settingsBackBtn'),
     saveBtn: $('#saveBtn'),
     skillInput: $('#skillInput'),
@@ -103,31 +117,42 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ============ AI 设置 ============
-  function initAiSettings() {
+  async function initAiSettings() {
+    // 加载页面设置中的 AI 配置
+    const config = await AIService.getConfig();
+    els.aiApiKey.value = config.apiKey || '';
+    els.aiBaseUrl.value = config.baseUrl || '';
+    els.aiModel.value = config.model || '';
+
     // 更新 AI 状态
-    updateAiStatus();
+    await updateAiStatus();
 
     // AI 开关事件
-    els.aiEnabled.addEventListener('change', () => {
+    els.aiEnabled.addEventListener('change', async () => {
       const enabled = els.aiEnabled.checked;
+      const configured = await AIService.isConfigured();
       chrome.storage.local.set({ aiEnabled: enabled });
-      if (enabled && !AIService.isConfigured()) {
-        showToast('⚠️ 请先在 ai-config.js 中配置 API Key', 'error');
+      if (enabled && !configured) {
+        showToast('⚠️ 请先配置 API Key', 'error');
         els.aiEnabled.checked = false;
         chrome.storage.local.set({ aiEnabled: false });
       }
     });
 
     // 加载 AI 开关状态
-    chrome.storage.local.get('aiEnabled', (result) => {
-      if (result.aiEnabled && AIService.isConfigured()) {
-        els.aiEnabled.checked = true;
+    chrome.storage.local.get('aiEnabled', async (result) => {
+      if (result.aiEnabled) {
+        const configured = await AIService.isConfigured();
+        if (configured) {
+          els.aiEnabled.checked = true;
+        }
       }
     });
   }
 
-  function updateAiStatus() {
-    if (AIService.isConfigured()) {
+  async function updateAiStatus() {
+    const configured = await AIService.isConfigured();
+    if (configured) {
       els.aiStatus.textContent = '已配置';
       els.aiStatus.className = 'ai-status-badge configured';
     } else {
@@ -242,6 +267,29 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (info) {
+        info.source = 'page';
+
+        // AI 开启时，用 AI 从页面文本中提取结构化信息
+        const useAi = els.aiEnabled.checked && await AIService.isConfigured();
+        if (useAi && info.rawText && info.rawText.length > 20) {
+          showToast('🤖 AI 正在分析页面内容...', 'success');
+          try {
+            const aiResult = await AIService.extractInfoFromText(info.rawText);
+            if (aiResult.success && aiResult.data) {
+              // 合并：AI 结果填补 CSS 选择器未识别到的字段
+              info.companyName = info.companyName || aiResult.data.companyName;
+              info.jobTitle = info.jobTitle || aiResult.data.jobTitle;
+              info.companyDesc = info.companyDesc || aiResult.data.companyDesc;
+              info.requirements = info.requirements || aiResult.data.requirements;
+              // 标记为 AI 增强
+              info.aiEnhanced = true;
+              showToast('✅ AI 已完成页面信息提取');
+            }
+          } catch (e) {
+            console.warn('AI 信息提取失败，使用页面抓取结果:', e.message);
+          }
+        }
+
         handleExtractedInfo(info);
       } else {
         showNoResult();
@@ -268,6 +316,21 @@ document.addEventListener('DOMContentLoaded', () => {
       els.companyDesc.textContent = info.companyDesc || info.requirements || info.rawText?.substring(0, 500) || '无';
       els.platformBadge.textContent = getPlatformName(info.platform);
 
+      // 设置来源标签
+      setSourceBadge(info);
+
+      // 显示原始识别内容（页面获取时）
+      if (info.source === 'page' && info.rawText) {
+        els.rawContentArea.classList.remove('hidden');
+        els.rawContent.textContent = info.rawText.substring(0, 2000);
+        // 确保内容初始可见（避免上次折叠状态残留）
+        els.rawContent.classList.remove('hidden');
+        const icon = els.rawContentToggle.querySelector('.raw-toggle-icon');
+        if (icon) icon.classList.remove('collapsed');
+      } else {
+        els.rawContentArea.classList.add('hidden');
+      }
+
       // 生成话术
       generateAndDisplay(info);
     } else {
@@ -275,9 +338,46 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // 原始内容折叠/展开
+  els.rawContentToggle.addEventListener('click', () => {
+    const isHidden = els.rawContent.classList.toggle('hidden');
+    const icon = els.rawContentToggle.querySelector('.raw-toggle-icon');
+    if (isHidden) {
+      icon.classList.add('collapsed');
+    } else {
+      icon.classList.remove('collapsed');
+    }
+  });
+
+  // 设置来源标签
+  function setSourceBadge(info) {
+    els.sourceBadge.classList.remove('hidden');
+    switch (info.source) {
+      case 'page':
+        if (info.aiEnhanced) {
+          els.sourceBadge.textContent = '🤖 AI增强 · 页面获取';
+          els.sourceBadge.className = 'badge source-badge source-ai-enhanced';
+        } else {
+          els.sourceBadge.textContent = '📄 页面获取';
+          els.sourceBadge.className = 'badge source-badge source-page';
+        }
+        break;
+      case 'screenshot':
+        els.sourceBadge.textContent = '📸 截图识别';
+        els.sourceBadge.className = 'badge source-badge source-screenshot';
+        break;
+      case 'manual':
+        els.sourceBadge.textContent = '📋 手动输入';
+        els.sourceBadge.className = 'badge source-badge source-manual';
+        break;
+      default:
+        els.sourceBadge.classList.add('hidden');
+    }
+  }
+
   // 生成并展示话术
   async function generateAndDisplay(info) {
-    const useAi = els.aiEnabled.checked && AIService.isConfigured();
+    const useAi = els.aiEnabled.checked && await AIService.isConfigured();
 
     if (useAi && !isAiGenerating) {
       // AI 生成
@@ -393,6 +493,7 @@ document.addEventListener('DOMContentLoaded', () => {
       companySize: '',
       rawText: text,
       platform: 'manual',
+      source: 'manual',
       url: 'manual-input'
     };
 
@@ -402,8 +503,121 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 500);
   });
 
-  // ============ 截图视图 ============
-  els.screenshotBackBtn.addEventListener('click', () => switchView('main'));
+  // ============ 从截图视图去首页解析 ============
+  els.goHomeAnalyzeBtn.addEventListener('click', () => {
+    const src = els.screenshotImage.src;
+    if (!src) { showToast('请先截取图片', 'error'); return; }
+
+    // 将截图数据带到主视图
+    els.mainScreenshotImage.src = src;
+    els.mainScreenshotArea.classList.remove('hidden');
+    els.visionWarning.classList.add('hidden');
+
+    // 重置截图视图
+    els.screenshotImage.src = '';
+    els.screenshotImage.classList.add('hidden');
+    els.screenshotPreview.classList.remove('hidden');
+    els.goHomeAnalyzeBtn.classList.add('hidden');
+
+    switchView('main');
+  });
+
+  // ============ 主视图截图分析 ============
+  els.analyzeImageBtn.addEventListener('click', async () => {
+    const src = els.mainScreenshotImage.src;
+    if (!src) return;
+
+    if (!els.aiEnabled.checked) {
+      showToast('⚠️ 请先开启 AI 增强', 'error');
+      return;
+    }
+
+    const configured = await AIService.isConfigured();
+    if (!configured) {
+      showToast('⚠️ 请先配置 API Key', 'error');
+      return;
+    }
+
+    els.analyzeImageBtn.disabled = true;
+    showLoading(true);
+    hideAllResults();
+    els.visionWarning.classList.add('hidden');
+
+    try {
+      const result = await AIService.analyzeImage(src, userProfile, { count: 8 });
+
+      if (result.unsupportedVision) {
+        // 模型不支持图片识别
+        const config = await AIService.getConfig();
+        els.visionWarningModel.textContent = config.model || '未知';
+        els.visionWarning.classList.remove('hidden');
+        showToast('⚠️ 当前模型不支持图片识别', 'error');
+      } else if (result.success) {
+        // 成功识别
+        if (result.data && (result.data.companyName || result.data.companyDesc)) {
+          currentCompanyInfo = {
+            ...result.data,
+            platform: 'screenshot',
+            source: 'screenshot',
+            url: 'screenshot',
+            rawText: result.data.companyDesc || ''
+          };
+
+          els.companyInfo.classList.remove('hidden');
+          els.companyName.textContent = currentCompanyInfo.companyName || '未识别';
+          els.jobTitle.textContent = currentCompanyInfo.jobTitle || '未识别';
+          els.companyDesc.textContent = currentCompanyInfo.companyDesc || currentCompanyInfo.requirements || '无';
+          els.platformBadge.textContent = '截图识别';
+          setSourceBadge(currentCompanyInfo);
+          els.rawContentArea.classList.add('hidden');
+        }
+
+        if (result.results && result.results.length > 0) {
+          els.resultArea.classList.remove('hidden');
+          els.noResult.classList.add('hidden');
+          els.resultCount.textContent = `${result.results.length} 条`;
+          renderResults(result.results);
+        } else if (!currentCompanyInfo) {
+          showNoResult();
+        }
+      } else {
+        showToast('❌ ' + (result.error || '识别失败'), 'error');
+      }
+    } catch (e) {
+      console.error('图片分析失败:', e);
+      showToast('❌ ' + e.message, 'error');
+
+      // 如果错误消息中包含 vision/image/空内容 相关关键词，也显示警告
+      const msg = e.message.toLowerCase();
+      if (msg.includes('vision') || msg.includes('image') || msg.includes('multimodal') ||
+          msg.includes('not support') || msg.includes('unsupported') ||
+          msg.includes('model') || msg.includes('内容为空') ||
+          msg.includes('不支持') || msg.includes('图片')) {
+        const config = await AIService.getConfig().catch(() => ({}));
+        els.visionWarningModel.textContent = config.model || '未知';
+        els.visionWarning.classList.remove('hidden');
+      }
+    }
+
+    showLoading(false);
+    els.analyzeImageBtn.disabled = false;
+  });
+
+  // 关闭主视图截图区域
+  els.removeScreenshotBtn.addEventListener('click', () => {
+    els.mainScreenshotArea.classList.add('hidden');
+    els.mainScreenshotImage.src = '';
+    els.visionWarning.classList.add('hidden');
+  });
+  els.screenshotBackBtn.addEventListener('click', () => {
+    // 重置截图视图状态
+    els.screenshotImage.src = '';
+    els.screenshotImage.classList.add('hidden');
+    els.screenshotPreview.classList.remove('hidden');
+    els.goHomeAnalyzeBtn.classList.add('hidden');
+    els.screenshotStatus.classList.add('hidden');
+    switchView('main');
+  });
 
   els.captureBtn.addEventListener('click', async () => {
     els.screenshotStatus.classList.remove('hidden');
@@ -423,9 +637,10 @@ document.addEventListener('DOMContentLoaded', () => {
         els.screenshotImage.src = response.screenshot;
         els.screenshotImage.classList.remove('hidden');
         els.screenshotPreview.classList.add('hidden');
+        els.goHomeAnalyzeBtn.classList.remove('hidden');
 
-        // 提示用户需要 OCR
-        showToast('📸 截图已捕获，请粘贴页面文本来识别');
+        // 提示用户可以去首页解析
+        showToast('📸 截图已捕获，点击「去首页解析」使用AI识别');
       }
     } catch (e) {
       console.error('截图失败:', e);
@@ -448,15 +663,27 @@ document.addEventListener('DOMContentLoaded', () => {
       els.screenshotImage.src = reader.result;
       els.screenshotImage.classList.remove('hidden');
       els.screenshotPreview.classList.add('hidden');
-      showToast('📸 图片已加载，请粘贴页面文本进行识别');
+      els.goHomeAnalyzeBtn.classList.remove('hidden');
+      showToast('📸 图片已加载，点击「去首页解析」使用AI识别');
     };
     reader.readAsDataURL(file);
   });
 
   // ============ 设置视图 ============
   els.settingsBackBtn.addEventListener('click', () => switchView('main'));
-  els.saveBtn.addEventListener('click', () => {
+  els.saveBtn.addEventListener('click', async () => {
+    // 保存 AI 配置到 storage
+    const aiConfig = {
+      apiKey: els.aiApiKey.value.trim(),
+      baseUrl: els.aiBaseUrl.value.trim(),
+      model: els.aiModel.value.trim(),
+    };
+    await new Promise(resolve => {
+      chrome.storage.local.set({ aiConfig }, resolve);
+    });
+
     saveProfile();
+    await updateAiStatus();
     switchView('main');
   });
 
@@ -520,6 +747,8 @@ document.addEventListener('DOMContentLoaded', () => {
     els.companyInfo.classList.add('hidden');
     els.resultArea.classList.add('hidden');
     els.noResult.classList.add('hidden');
+    els.rawContentArea.classList.add('hidden');
+    els.sourceBadge.classList.add('hidden');
   }
 
   function showNoResult() {
