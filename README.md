@@ -48,6 +48,9 @@ cd hire-helper
 // ========================================
 // AI 配置文件 — 请勿提交到 Git
 // ========================================
+//
+// ⚠️ 配置优先级：扩展设置页保存的配置会覆盖本文件。
+// 若改本文件后仍 401，请到设置页重新保存，或清除 chrome.storage.local 中的 aiConfig。
 
 const AI_CONFIG = {
   // API 地址（支持 OpenAI 及兼容接口：DeepSeek、通义千问、智谱等）
@@ -165,7 +168,9 @@ React, Vue3, TypeScript, Node.js, PostgreSQL
 ### 第二步：开启 AI 增强
 
 1. 在主界面打开 **🤖 AI 增强** 开关
-2. 确认状态显示「已配置」（需在 `ai-config.js` 中填写 API Key）
+2. 确认状态显示「已配置」（需在 `ai-config.js` 或设置页填写 API Key）
+
+> ⚠️ **配置优先级**：设置页保存的 AI 配置会覆盖 `ai-config.js`。若只改了文件却报 401，请到设置页重新保存 API Key，或清除旧配置后重新加载扩展（见下方「常见问题」）。
 
 ### 第三步：生成话术
 
@@ -193,7 +198,38 @@ React, Vue3, TypeScript, Node.js, PostgreSQL
 | 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
 | 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
 
-只需修改 `ai-config.js` 中的 `baseUrl`、`model`、`apiKey` 即可切换。
+只需修改 `ai-config.js` 中的 `baseUrl`、`model`、`apiKey` 即可切换。也可以在扩展 **设置页** 直接填写，设置页的值优先级更高。
+
+### 配置优先级
+
+扩展读取 AI 配置的顺序如下（前者覆盖后者）：
+
+1. **设置页**（保存到 `chrome.storage.local` 的 `aiConfig`）
+2. **`ai-config.js`**（本地文件，作为默认值）
+
+因此，如果你曾在设置页保存过 API Key，之后只改 `ai-config.js` **不会生效**，请求仍会使用设置页里的旧 Key，从而出现 `401 Invalid API Key`。
+
+**推荐做法：**
+
+- 首次配置：填写 `ai-config.js`，或在设置页填写并保存（二选一即可）
+- 更换 Key / 接口：到设置页更新并保存；或清除旧配置后改文件
+
+**清除设置页覆盖的配置**（在 `chrome://extensions` 打开本扩展的 Service Worker 控制台）：
+
+```js
+chrome.storage.local.remove('aiConfig')
+```
+
+执行后重新加载扩展，配置会回退到 `ai-config.js`。
+
+### 常见问题：401 Invalid API Key
+
+| 原因 | 解决办法 |
+|------|----------|
+| 设置页旧 Key 覆盖了 `ai-config.js` | 到设置页重新粘贴并保存，或执行上方 `remove('aiConfig')` |
+| API Key 复制不完整（多/少字符） | 从服务商控制台完整复制，注意首尾无空格 |
+| 改完 `ai-config.js` 未重载扩展 | 到 `chrome://extensions` 点击「重新加载」 |
+| Base URL 与协议不匹配 | OpenAI 兼容接口用 `.../v1`，Anthropic 兼容用服务商提供的 anthropic 地址 |
 
 **AI 调用流程：**
 
