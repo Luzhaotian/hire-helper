@@ -6,6 +6,11 @@
 
 const AIService = (() => {
 
+  // ===== 上下文文件缓存（skills/rules/resume/examples） =====
+  let _contextCache = null;     // { skills, resume, rules, examples }
+  let _contextCacheTime = 0;
+  const CONTEXT_CACHE_TTL = 5 * 60 * 1000; // 5 分钟自动过期
+
   /**
    * 获取完整的 AI 配置
    * 优先使用页面设置（chrome.storage.local），fallback 到 ai-config.js
@@ -25,7 +30,7 @@ const AIService = (() => {
       baseUrl: stored.baseUrl || fileConfig.baseUrl || 'https://api.openai.com/v1',
       model: stored.model || fileConfig.model || 'gpt-4o-mini',
       temperature: stored.temperature ?? fileConfig.temperature ?? 0.8,
-      maxTokens: stored.maxTokens ?? fileConfig.maxTokens ?? 512,
+      maxTokens: stored.maxTokens ?? fileConfig.maxTokens ?? 2048,
       systemPrompt: stored.systemPrompt || fileConfig.systemPrompt || '',
     };
   }
@@ -57,13 +62,38 @@ const AIService = (() => {
   }
 
   /**
-   * 从 skills/ 和 rules/ 文件夹加载所有 .md 文件
-   * @returns {Promise<{skills: string, rules: string}>}
+   * 从 skills/ 和 rules/ 文件夹加载上下文文件
+   * 自动缓存处理后的结果，5 分钟过期或调用 invalidateContextCache() 清除
+   * @returns {Promise<{skills: string, resume: string, rules: string}>}
    */
   async function loadContextFiles() {
-    const skillsContent = await readFile('skills/SKILL.md');
-    const rulesContent = await readFile('rules/RULES.md');
-    return { skills: skillsContent, rules: rulesContent };
+    const now = Date.now();
+    if (_contextCache && (now - _contextCacheTime) < CONTEXT_CACHE_TTL) {
+      return _contextCache;
+    }
+
+    const [skillsContent, resumeContent, rulesContent] = await Promise.all([
+      readFile('skills/SKILL.md'),
+      readFile('skills/RESUME.md'),
+      readFile('rules/RULES.md')
+    ]);
+
+    _contextCache = {
+      skills:    extractUsefulContent(skillsContent),
+      resume:    extractUsefulContent(resumeContent),
+      rules:     extractUsefulContent(rulesContent),
+      examples:  extractExamples(rulesContent)
+    };
+    _contextCacheTime = now;
+    return _contextCache;
+  }
+
+  /**
+   * 手动使上下文缓存失效（修改 skills/rules 后调用）
+   */
+  function invalidateContextCache() {
+    _contextCache = null;
+    _contextCacheTime = 0;
   }
 
   /**
@@ -86,6 +116,113 @@ const AIService = (() => {
       })
       .join('\n')
       .trim();
+  }
+
+  /**
+   * 从 rules Markdown 中提取示例话术（## 示例 之后的 - 开头行）
+   * @param {string} md
+   * @returns {string[]} 示例话术数组
+   */
+  function extractExamples(md) {
+    if (!md) return [];
+    const lines = md.split('\n');
+    const examples = [];
+    let inExampleSection = false;
+
+    for (const raw of lines) {
+      const line = raw.trim();
+      // 进入示例区块
+      if (/^#{1,3}\s*示例/.test(line)) {
+        inExampleSection = true;
+        continue;
+      }
+      // 遇到新的标题，退出示例区块
+      if (inExampleSection && /^#{1,3}\s/.test(line)) break;
+      // 提取示例行
+      if (inExampleSection && line.startsWith('- ')) {
+        const text = line.slice(2).trim();
+        if (text.length > 0) examples.push(text);
+      }
+    }
+    return examples;
+  }
+
+  /**
+   * 从 API 响应中提取助手文本
+   * 推理模型（如 mimo-v2.5-pro）可能把 token 耗在 reasoning_content，导致 content 为空
+   * @param {Object} choice
+   * @returns {string}
+   */
+  function extractAssistantText(choice) {
+    const message = choice?.message || {};
+    const content = (message.content || '').trim();
+    if (content) return content;
+
+    const reasoning = (message.reasoning_content || '').trim();
+    if (!reasoning) return '';
+
+    // 从思考内容中提取引号包裹的候选话术
+    const quoted = [...reasoning.matchAll(/["「]([^"」\n]{4,200})["」]/g)]
+      .map(m => m[1].trim())
+      .filter(Boolean);
+    if (quoted.length > 0) return quoted.join('\n');
+
+    return '';
+  }
+
+  /**
+   * 调用 Chat Completions API
+   * @param {Object} config
+   * @param {Array} messages
+   * @param {Object} overrides
+   * @returns {Promise<Object>}
+   */
+  async function callChatCompletion(config, messages, overrides = {}) {
+    const baseUrl = config.baseUrl.replace(/\/+$/, '');
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`
+      },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: config.temperature,
+        max_tokens: overrides.maxTokens ?? config.maxTokens,
+        messages
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      throw new Error(`AI API 请求失败 (${response.status}): ${errorBody.substring(0, 200)}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 解析 AI 返回的话术行
+   * @param {string} content
+   * @returns {Array<{text: string, type: string}>}
+   */
+  function parseGreetingLines(content) {
+    return content
+      .split('\n')
+      .map(line => line.replace(/^\d+[\.\)、]\s*/, '').replace(/^[-*]\s*/, '').trim())
+      .filter(line => line.length >= 4 && line.length <= 200)
+      .map(text => ({ text, type: 'ai' }));
+  }
+
+  /**
+   * 构建示例话术文本块
+   * @param {string[]} examples
+   * @returns {string}
+   */
+  function buildExamplesText(examples) {
+    if (!examples || examples.length === 0) return '';
+    return '## 示例话术（参考风格和长度，不要照搬内容）\n' +
+      examples.map(e => '- ' + e).join('\n');
   }
 
   /**
@@ -125,26 +262,36 @@ const AIService = (() => {
 
     const { count = 8 } = options;
 
-    // 1. 加载文件上下文
-    const { skills, rules } = await loadContextFiles();
-    const skillsText = extractUsefulContent(skills);
-    const rulesText = extractUsefulContent(rules);
+    // 1. 加载文件上下文（自动缓存）
+    const { skills: skillsText, resume: resumeText, rules: rulesText, examples } = await loadContextFiles();
 
     // 2. 构建 system prompt（规则 + 基础角色）
     const basePrompt = config.systemPrompt
       ? config.systemPrompt
       : '你是一个专业的招聘助手。根据公司信息和用户资料，生成简短的打招呼话术。';
 
-    const systemParts = [basePrompt];
+    const systemParts = [
+      basePrompt,
+      '直接输出最终话术文本，不要输出思考过程、分析说明或 markdown。'
+    ];
     if (rulesText) {
       systemParts.push('', '## 输出规则（必须严格遵守）', rulesText);
     }
 
-    // 3. 构建 user message（公司信息 + 个人档案 + 设置页补充）
+    // 3. 构建 user message（示例 + 公司信息 + 个人档案 + 设置页补充）
     const userParts = [];
 
+    // 示例 few-shot（放在最前面，让模型先理解风格和长度）
+    const examplesText = buildExamplesText(examples);
+    if (examplesText) {
+      userParts.push(examplesText, '');
+    }
+
     if (skillsText) {
-      userParts.push('## 个人能力档案', skillsText);
+      userParts.push('## 个人能力概要', skillsText);
+    }
+    if (resumeText) {
+      userParts.push('', '## 完整简历', resumeText);
     }
 
     // 设置页的技能/亮点作为补充
@@ -160,51 +307,42 @@ const AIService = (() => {
     }
 
     userParts.push('', '## 目标公司信息', buildCompanyInfoText(companyInfo));
-    userParts.push('', `请生成 ${count} 条打招呼话术，每条 10-20 个字。`);
+    userParts.push('', `请生成 ${count} 条打招呼话术，参考上方示例的风格和长度。`);
 
-    // 4. 调用 API
-    const baseUrl = config.baseUrl.replace(/\/+$/, '');
-    const { model, temperature, maxTokens } = config;
+    // 4. 调用 API（推理模型需更大 max_tokens，否则思考占满配额导致 content 为空）
+    const messages = [
+      { role: 'system', content: systemParts.join('\n') },
+      { role: 'user', content: userParts.join('\n') }
+    ];
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        temperature,
-        max_tokens: maxTokens,
-        messages: [
-          { role: 'system', content: systemParts.join('\n') },
-          { role: 'user', content: userParts.join('\n') }
-        ]
-      })
-    });
+    let data = await callChatCompletion(config, messages);
+    let choice = data.choices?.[0];
+    let content = extractAssistantText(choice);
 
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => '');
-      throw new Error(`AI API 请求失败 (${response.status}): ${errorBody.substring(0, 200)}`);
+    if (!content && choice?.finish_reason === 'length' && choice?.message?.reasoning_content) {
+      console.warn('推理模型 content 为空，自动加大 max_tokens 重试');
+      data = await callChatCompletion(config, messages, {
+        maxTokens: Math.max(config.maxTokens * 2, 2048)
+      });
+      choice = data.choices?.[0];
+      content = extractAssistantText(choice);
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
-
     if (!content) {
-      throw new Error('AI 返回内容为空');
+      const finishReason = choice?.finish_reason || 'unknown';
+      throw new Error(
+        `AI 返回内容为空（finish_reason: ${finishReason}）。` +
+        '推理模型请把 ai-config.js 的 maxTokens 调到 2048 以上。'
+      );
     }
 
     // 5. 解析返回的话术（按换行分隔，去编号）
-    const lines = content
-      .split('\n')
-      .map(line => line.replace(/^\d+[\.\)、]\s*/, '').replace(/^[-*]\s*/, '').trim())
-      .filter(line => line.length >= 4 && line.length <= 30);
+    const lines = parseGreetingLines(content);
+    if (lines.length === 0) {
+      throw new Error('AI 返回内容无法解析为话术，请检查 rules/RULES.md 格式要求');
+    }
 
-    return lines.map(text => ({
-      text,
-      type: 'ai'
-    }));
+    return lines;
   }
 
   /**
@@ -251,10 +389,8 @@ const AIService = (() => {
 
     const { count = 8 } = options;
 
-    // 加载文件上下文
-    const { skills, rules } = await loadContextFiles();
-    const skillsText = extractUsefulContent(skills);
-    const rulesText = extractUsefulContent(rules);
+    // 加载文件上下文（自动缓存）
+    const { skills: skillsText, resume: resumeText, rules: rulesText, examples } = await loadContextFiles();
 
     const basePrompt = config.systemPrompt
       ? config.systemPrompt
@@ -267,12 +403,23 @@ const AIService = (() => {
 
     // 从图片中提取公司信息，然后生成话术
     const userParts = [];
+
+    // 示例 few-shot
+    const examplesText = buildExamplesText(examples);
+    if (examplesText) {
+      userParts.push(examplesText, '');
+    }
+
     userParts.push('请先识别图片中的公司名称、职位、公司介绍/岗位要求等信息，以JSON格式输出信息，然后再生成打招呼话术。');
     userParts.push('请按以下JSON格式返回（不要包含markdown代码块标记）：');
     userParts.push('{"companyName":"公司名称","jobTitle":"职位","companyDesc":"公司介绍","requirements":"岗位要求","greetings":["话术1","话术2",...]}');
+    userParts.push('greetings 中的话术请参考上方示例的风格和长度。');
 
     if (skillsText) {
-      userParts.push('', '## 个人能力档案', skillsText);
+      userParts.push('', '## 个人能力概要', skillsText);
+    }
+    if (resumeText) {
+      userParts.push('', '## 完整简历', resumeText);
     }
 
     const profileParts = [];
@@ -479,6 +626,205 @@ ${text}`;
     }
   }
 
-  return { isConfigured, generate, getConfig, analyzeImage, extractInfoFromText };
+  /**
+   * 解析 SSE 流中的增量文本，返回已积累的完整文本和新解析的话术
+   * @param {string} accumulated - 到目前为止积累的完整文本
+   * @param {Function} onGreeting - 每解析出一条新话术时的回调 (greeting: {text, type}) => void
+   * @param {Set} seenTexts - 已输出的话术文本集合（去重用）
+   * @returns {{ parsed: number }} 本次新解析出的话术数量
+   */
+  function parseStreamChunk(accumulated, onGreeting, seenTexts) {
+    // 按换行切分，最后一条可能还不完整（没有换行符结尾），跳过它
+    const lines = accumulated.split('\n');
+    let newCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const isLast = i === lines.length - 1;
+      // 最后一行如果没有换行结尾，可能还没收完，跳过
+      if (isLast && !accumulated.endsWith('\n')) continue;
+
+      let line = lines[i]
+        .replace(/^\d+[\.\)、]\s*/, '')
+        .replace(/^[-*]\s*/, '')
+        .trim();
+
+      if (line.length < 4 || line.length > 200) continue;
+      if (seenTexts.has(line)) continue;
+
+      seenTexts.add(line);
+      onGreeting({ text: line, type: 'ai' });
+      newCount++;
+    }
+
+    return newCount;
+  }
+
+  /**
+   * 流式调用 AI API 生成话术（SSE）
+   * 与 generate() 功能相同，但通过回调逐条返回话术，体感更快
+   *
+   * @param {Object} companyInfo - 公司信息
+   * @param {Object} userProfile - 用户档案（设置页的技能/亮点）
+   * @param {Object} options - { count?: number, onGreeting?: (greeting) => void, signal?: AbortSignal }
+   * @returns {Promise<Array>} 最终的完整话术列表
+   */
+  async function generateStream(companyInfo, userProfile, options = {}) {
+    const config = await getConfig();
+
+    if (!config.apiKey) {
+      throw new Error('AI 未配置：请在设置页面填写 API Key，或在 ai-config.js 中配置');
+    }
+
+    const { count = 8, onGreeting, signal } = options;
+
+    // 1. 加载文件上下文（自动缓存）
+    const { skills: skillsText, resume: resumeText, rules: rulesText, examples } = await loadContextFiles();
+
+    // 2. 构建 system prompt
+    const basePrompt = config.systemPrompt
+      ? config.systemPrompt
+      : '你是一个专业的招聘助手。根据公司信息和用户资料，生成简短的打招呼话术。';
+
+    const systemParts = [
+      basePrompt,
+      '直接输出最终话术文本，不要输出思考过程、分析说明或 markdown。'
+    ];
+    if (rulesText) {
+      systemParts.push('', '## 输出规则（必须严格遵守）', rulesText);
+    }
+
+    // 3. 构建 user message（示例 + 公司信息 + 个人档案）
+    const userParts = [];
+
+    // 示例 few-shot（放在最前面，让模型先理解风格和长度）
+    const examplesText = buildExamplesText(examples);
+    if (examplesText) {
+      userParts.push(examplesText, '');
+    }
+
+    if (skillsText) {
+      userParts.push('## 个人能力概要', skillsText);
+    }
+    if (resumeText) {
+      userParts.push('', '## 完整简历', resumeText);
+    }
+
+    const profileParts = [];
+    if (userProfile.skills && userProfile.skills.length > 0) {
+      profileParts.push('技能标签：' + userProfile.skills.join('、'));
+    }
+    if (userProfile.highlights && userProfile.highlights.length > 0) {
+      profileParts.push('亮点优势：' + userProfile.highlights.join('、'));
+    }
+    if (profileParts.length > 0) {
+      userParts.push('', '## 设置页补充信息', profileParts.join('\n'));
+    }
+
+    userParts.push('', '## 目标公司信息', buildCompanyInfoText(companyInfo));
+    userParts.push('', `请生成 ${count} 条打招呼话术，参考上方示例的风格和长度。`);
+
+    // 4. 发起 SSE 流式请求
+    const baseUrl = config.baseUrl.replace(/\/+$/, '');
+    const { model, temperature, maxTokens } = config;
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        temperature,
+        max_tokens: maxTokens,
+        stream: true,
+        messages: [
+          { role: 'system', content: systemParts.join('\n') },
+          { role: 'user', content: userParts.join('\n') }
+        ]
+      }),
+      signal
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      throw new Error(`AI API 请求失败 (${response.status}): ${errorBody.substring(0, 200)}`);
+    }
+
+    // 5. 读取 SSE 流
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let accumulated = '';       // 累积的完整助手文本
+    let buffer = '';            // 未处理完的 SSE 原始缓冲
+    const seenTexts = new Set(); // 已回调的话术文本（去重）
+    const allGreetings = [];    // 收集全部话术用于最终返回
+
+    const handleGreeting = (g) => {
+      allGreetings.push(g);
+      if (onGreeting) onGreeting(g);
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // 按行处理 SSE 事件
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // 最后一个可能不完整，留到下次
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith(':')) continue; // 空行或注释
+          if (!trimmed.startsWith('data:')) continue;
+
+          const data = trimmed.slice(5).trim();
+          if (data === '[DONE]') break;
+
+          try {
+            const chunk = JSON.parse(data);
+            const delta = chunk.choices?.[0]?.delta;
+            if (delta?.content) {
+              accumulated += delta.content;
+              // 每收到增量就尝试解析新的话术行
+              parseStreamChunk(accumulated, handleGreeting, seenTexts);
+            }
+          } catch (e) {
+            // 忽略无法解析的 chunk
+          }
+        }
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        // 用户主动中断，返回已收集的话术
+        if (allGreetings.length === 0) throw new Error('生成已取消');
+        return allGreetings;
+      }
+      throw e;
+    }
+
+    // 6. 流结束后，解析最后一行（之前可能因为没有换行被跳过）
+    if (accumulated.endsWith('\n') === false && accumulated.length > 0) {
+      // 对剩余内容做最后一次解析
+      const lastLine = accumulated.split('\n').pop() || '';
+      let cleaned = lastLine
+        .replace(/^\d+[\.\)、]\s*/, '')
+        .replace(/^[-*]\s*/, '')
+        .trim();
+      if (cleaned.length >= 4 && cleaned.length <= 200 && !seenTexts.has(cleaned)) {
+        handleGreeting({ text: cleaned, type: 'ai' });
+      }
+    }
+
+    if (allGreetings.length === 0) {
+      throw new Error('AI 未生成有效话术，请检查配置');
+    }
+
+    return allGreetings;
+  }
+
+  return { isConfigured, generate, generateStream, getConfig, analyzeImage, extractInfoFromText, invalidateContextCache };
 
 })();

@@ -73,6 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentCompanyInfo = null;
   let userProfile = { skills: [], highlights: [], customTemplates: [] };
   let isAiGenerating = false;
+  let currentAbortController = null; // 用于取消流式生成
 
   // ============ 初始化 ============
   loadProfile();
@@ -375,34 +376,59 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // 生成并展示话术
+  // 生成并展示话术（支持流式输出）
   async function generateAndDisplay(info) {
     const useAi = els.aiEnabled.checked && await AIService.isConfigured();
 
     if (useAi && !isAiGenerating) {
-      // AI 生成
+      // AI 流式生成
       isAiGenerating = true;
-      showLoading(true);
+      currentAbortController = new AbortController();
       hideAllResults();
 
+      // 立即展示结果区域 + 流式 loading 指示
+      els.resultArea.classList.remove('hidden');
+      els.noResult.classList.add('hidden');
+      els.resultList.innerHTML = '';
+      els.resultCount.innerHTML = '<span class="spinner tiny"></span> 生成中…';
+      showLoading(false);
+      appendStreamingIndicator();
+
       try {
-        const aiResults = await AIService.generate(info, userProfile, { count: 8 });
-        if (aiResults.length > 0) {
-          els.resultArea.classList.remove('hidden');
-          els.noResult.classList.add('hidden');
-          els.resultCount.textContent = `${aiResults.length} 条`;
-          renderResults(aiResults);
-        } else {
-          showNoResult();
-        }
+        await AIService.generateStream(info, userProfile, {
+          count: 8,
+          signal: currentAbortController.signal,
+          onGreeting: (greeting) => {
+            // 每收到一条话术，移除打字指示器、追加话术、重新加回指示器
+            removeStreamingIndicator();
+            appendResult(greeting);
+            appendStreamingIndicator();
+            els.resultCount.innerHTML = `<span class="spinner tiny"></span> ${els.resultList.children.length - 1} 条`;
+          }
+        });
       } catch (e) {
-        console.error('AI 生成失败:', e);
-        showToast('❌ ' + e.message, 'error');
-        // 回退到本地生成
-        generateLocal(info);
+        if (e.message === '生成已取消') {
+          // 用户主动取消，保留已生成的话术
+          if (els.resultList.children.length === 0) {
+            showNoResult();
+          }
+        } else {
+          console.error('AI 生成失败:', e);
+          showToast('❌ ' + e.message, 'error');
+          // 回退到本地生成
+          if (els.resultList.children.length === 0) {
+            generateLocal(info);
+          }
+        }
       } finally {
         isAiGenerating = false;
-        showLoading(false);
+        currentAbortController = null;
+        removeStreamingIndicator();
+        // 更新最终计数
+        const finalCount = els.resultList.children.length;
+        if (finalCount > 0) {
+          els.resultCount.textContent = `${finalCount} 条`;
+        }
       }
     } else {
       // 本地生成
@@ -430,22 +456,53 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderResults(results) {
     els.resultList.innerHTML = '';
     results.forEach((r, i) => {
-      const item = document.createElement('div');
-      item.className = 'result-item';
-      item.innerHTML = `
-        <span class="result-text">${escapeHtml(r.text)}</span>
-        <span class="result-tag ${r.type}">${getTypeLabel(r.type)}</span>
-        <span class="result-copy" title="点击复制">📋</span>
-      `;
-      item.addEventListener('click', () => {
-        copyToClipboard(r.text);
-      });
-      els.resultList.appendChild(item);
+      appendResult(r);
     });
   }
 
-  // 刷新按钮
+  // 追加单条结果到列表（带入场动画）
+  function appendResult(r) {
+    const item = document.createElement('div');
+    item.className = 'result-item result-item-enter';
+    item.innerHTML = `
+      <span class="result-text">${escapeHtml(r.text)}</span>
+      <span class="result-tag ${r.type}">${getTypeLabel(r.type)}</span>
+      <span class="result-copy" title="点击复制">📋</span>
+    `;
+    item.addEventListener('click', () => {
+      copyToClipboard(r.text);
+    });
+    els.resultList.appendChild(item);
+    // 触发入场动画
+    requestAnimationFrame(() => {
+      item.classList.remove('result-item-enter');
+    });
+  }
+
+  // 追加流式生成的「打字中」指示器（三个跳动的点）
+  function appendStreamingIndicator() {
+    if (els.resultList.querySelector('.streaming-indicator')) return;
+    const indicator = document.createElement('div');
+    indicator.className = 'streaming-indicator';
+    indicator.innerHTML = `
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+    `;
+    els.resultList.appendChild(indicator);
+  }
+
+  // 移除流式生成的打字指示器
+  function removeStreamingIndicator() {
+    const indicator = els.resultList.querySelector('.streaming-indicator');
+    if (indicator) indicator.remove();
+  }
+
+  // 刷新按钮（取消正在进行的流式生成，重新生成）
   els.refreshBtn.addEventListener('click', () => {
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
     if (currentCompanyInfo) {
       generateAndDisplay(currentCompanyInfo);
     }
