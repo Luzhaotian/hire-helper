@@ -44,7 +44,13 @@ cd hire-helper
 
 #### ① `ai-config.js` — AI 接口配置
 
-在项目根目录创建 `ai-config.js`：
+可直接复制示例文件后填写：
+
+```bash
+cp ai-config.example.js ai-config.js
+```
+
+或在项目根目录自行创建 `ai-config.js`：
 
 ```js
 // ========================================
@@ -102,7 +108,7 @@ React, Vue3, TypeScript, Node.js, PostgreSQL
 期望岗位：高级前端工程师 / 目标城市：北京 / 期望薪资：30-40k
 ```
 
-> 💡 `skills/RESUME.md` 为可选的完整简历文件，内容会作为补充上下文注入 prompt。
+> 💡 `skills/RESUME.md` 为可选的完整简历。**默认不注入**以节省 token；需要更深层人岗匹配时，在扩展设置页勾选「生成时注入完整简历」。
 
 #### ③ `rules/` — AI 输出规则 + 示例话术
 
@@ -292,6 +298,7 @@ hire-helper/
 ├── content.js           # 内容脚本（7 平台页面信息提取）
 ├── background.js        # Service Worker
 ├── generator.js         # 本地话术生成引擎
+├── ai-config.example.js # AI 配置示例（可复制为 ai-config.js）
 ├── ai-config.js         # ⚠️ AI 配置（需手动创建，已 gitignore）
 ├── ai-service.js        # AI 服务模块（流式 SSE + 缓存 + few-shot）
 ├── skills/              # ⚠️ 个人能力档案（需手动创建，已 gitignore）
@@ -321,14 +328,27 @@ hire-helper/
 
 ### AI 模式（AI 开启）
 
-1. **信息抓取**：自动识别页面公司信息
-2. **上下文注入**：读取 `skills/SKILL.md` + `skills/RESUME.md` + `rules/RULES.md`（自动缓存，5 分钟过期）
+1. **信息抓取**：自动识别页面公司信息（DOM 已识别到公司名+职位时，跳过额外的 AI 提取请求）
+2. **上下文注入**：读取 `skills/SKILL.md` + `rules/RULES.md`（自动缓存，5 分钟过期）；可选注入截断后的 `RESUME.md`
 3. **示例提取**：从 `rules/RULES.md` 的 `## 示例` 区块自动提取 few-shot 话术
 4. **Prompt 组装**：将示例、个人档案、输出规则、公司信息组装为结构化 prompt
 5. **流式生成**：调用 OpenAI 兼容 API（SSE 流式），逐条返回话术，首条约 1-2 秒即出
 6. **智能降级**：AI 调用失败时自动回退到本地模板引擎
 
+### 权限说明
+
+- **content_scripts**：仅匹配常见招聘站域名（BOSS/拉勾/猎聘/智联/前程无忧等）；其他页面仍可通过「识别信息」用 `scripting.executeScript` 临时注入。
+- **host_permissions `https://*/*`**：自定义 OpenAI 兼容 API 域名不可枚举，因此保留较宽 HTTPS 权限；已去掉 `http://*/*`。
+
 ## 📝 更新日志
+
+### v1.3.0
+- ♻️ 抽取 AI 请求/prompt/JSON 解析公共层，降低重复
+- ⚡ 扫描去掉固定等待；公司名+职位齐全时跳过二次 AI 提取
+- 📉 完整简历默认不注入（设置页可开启，并截断）
+- 🔒 收窄 content_scripts 到招聘站；去掉 http host_permissions
+- 🐛 修复流式计数与刷新取消竞态；保存设置刷新上下文缓存
+- 📄 新增 `ai-config.example.js`
 
 ### v1.2.0
 - ⚡ 新增 **SSE 流式输出**：AI 话术逐条展示，首条约 1-2 秒即出

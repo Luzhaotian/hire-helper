@@ -84,6 +84,9 @@
   function extractBoss(info) {
     // 公司名称
     info.companyName = getText([
+      '.job-detail-company .company-name a',
+      '.company-info .company-name a',
+      '.job-boss-info .boss-company-name',
       '.company-name a',
       '.info-company .name',
       '.company-text .name',
@@ -93,6 +96,8 @@
 
     // 公司描述 / 公司介绍
     info.companyDesc = getText([
+      '.job-detail-company .job-sec-text',
+      '.company-info .fold-text',
       '.company-info .desc',
       '.company-desc',
       '.sider-company .company-info',
@@ -105,14 +110,18 @@
 
     // 职位名称
     info.jobTitle = getText([
+      '.job-detail .job-name',
+      'h1.job-name',
+      '.job-banner .name',
       '.job-name',
       '.job-title',
-      '.info-primary .job-name',
-      'h1.job-name'
+      '.info-primary .job-name'
     ]);
 
     // 岗位要求
     info.requirements = getText([
+      '.job-detail-section .job-sec-text',
+      '.job-sec .text',
       '.job-detail .text',
       '.job-sec-text',
       '.job-detail-section .text',
@@ -121,6 +130,7 @@
 
     // 公司福利
     info.benefits = getText([
+      '.job-labels span',
       '.info-primary .tag-list',
       '.job-tags span',
       '.job-tag span',

@@ -782,6 +782,21 @@ body::-webkit-scrollbar-thumb {
 .ai-config-field:last-child {
   margin-bottom: 0;
 }
+
+.include-resume-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+}
+.include-resume-row input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
 .field-label {
   display: block;
   font-size: 12px;

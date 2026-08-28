@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
     aiApiKey: $('#aiApiKey'),
     aiBaseUrl: $('#aiBaseUrl'),
     aiModel: $('#aiModel'),
+    includeResume: $('#includeResume'),
     scanBtn: $('#scanBtn'),
     screenshotBtn: $('#screenshotBtn'),
     pasteBtn: $('#pasteBtn'),
@@ -124,6 +125,9 @@ document.addEventListener('DOMContentLoaded', () => {
     els.aiApiKey.value = config.apiKey || '';
     els.aiBaseUrl.value = config.baseUrl || '';
     els.aiModel.value = config.model || '';
+    if (els.includeResume) {
+      els.includeResume.checked = !!config.includeResume;
+    }
 
     // 更新 AI 状态
     await updateAiStatus();
@@ -245,17 +249,14 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-      // 注入 content.js
+      // 注入 content.js（已注入时无害）
       try {
         await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
       } catch (e) {}
 
-      // 等 content.js 注册 listener
-      await new Promise(r => setTimeout(r, 500));
-
-      // 消息通信提取
+      // 立即提取，失败则短重试
       let info = null;
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 4; i++) {
         try {
           const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_INFO' });
           if (response && response.success && response.data) {
@@ -263,26 +264,27 @@ document.addEventListener('DOMContentLoaded', () => {
             break;
           }
         } catch (e) {
-          await new Promise(r => setTimeout(r, 400));
+          if (i < 3) await new Promise(r => setTimeout(r, 100));
         }
       }
 
       if (info) {
         info.source = 'page';
 
-        // AI 开启时，用 AI 从页面文本中提取结构化信息
+        // 仅当公司名与职位都缺失时，才用 AI 补全结构化字段（省一次请求）
         const useAi = els.aiEnabled.checked && await AIService.isConfigured();
-        if (useAi && info.rawText && info.rawText.length > 20) {
+        const needsAiExtract = !(info.companyName && info.jobTitle);
+        if (useAi && needsAiExtract && info.rawText && info.rawText.length > 20) {
           showToast('🤖 AI 正在分析页面内容...', 'success');
           try {
-            const aiResult = await AIService.extractInfoFromText(info.rawText);
+            const aiResult = await AIService.extractInfoFromText(info.rawText, {
+              signal: currentAbortController?.signal
+            });
             if (aiResult.success && aiResult.data) {
-              // 合并：AI 结果填补 CSS 选择器未识别到的字段
               info.companyName = info.companyName || aiResult.data.companyName;
               info.jobTitle = info.jobTitle || aiResult.data.jobTitle;
               info.companyDesc = info.companyDesc || aiResult.data.companyDesc;
               info.requirements = info.requirements || aiResult.data.requirements;
-              // 标记为 AI 增强
               info.aiEnhanced = true;
               showToast('✅ AI 已完成页面信息提取');
             }
@@ -380,13 +382,18 @@ document.addEventListener('DOMContentLoaded', () => {
   async function generateAndDisplay(info) {
     const useAi = els.aiEnabled.checked && await AIService.isConfigured();
 
-    if (useAi && !isAiGenerating) {
-      // AI 流式生成
+    if (useAi) {
+      // 若已有进行中的生成，先取消并等标志位清理
+      if (isAiGenerating && currentAbortController) {
+        currentAbortController.abort();
+        await new Promise(r => setTimeout(r, 0));
+      }
+
       isAiGenerating = true;
       currentAbortController = new AbortController();
+      let streamedCount = 0;
       hideAllResults();
 
-      // 立即展示结果区域 + 流式 loading 指示
       els.resultArea.classList.remove('hidden');
       els.noResult.classList.add('hidden');
       els.resultList.innerHTML = '';
@@ -399,24 +406,22 @@ document.addEventListener('DOMContentLoaded', () => {
           count: 8,
           signal: currentAbortController.signal,
           onGreeting: (greeting) => {
-            // 每收到一条话术，移除打字指示器、追加话术、重新加回指示器
             removeStreamingIndicator();
             appendResult(greeting);
             appendStreamingIndicator();
-            els.resultCount.innerHTML = `<span class="spinner tiny"></span> ${els.resultList.children.length - 1} 条`;
+            streamedCount += 1;
+            els.resultCount.innerHTML = `<span class="spinner tiny"></span> ${streamedCount} 条`;
           }
         });
       } catch (e) {
         if (e.message === '生成已取消') {
-          // 用户主动取消，保留已生成的话术
-          if (els.resultList.children.length === 0) {
+          if (streamedCount === 0) {
             showNoResult();
           }
         } else {
           console.error('AI 生成失败:', e);
           showToast('❌ ' + e.message, 'error');
-          // 回退到本地生成
-          if (els.resultList.children.length === 0) {
+          if (streamedCount === 0) {
             generateLocal(info);
           }
         }
@@ -424,14 +429,16 @@ document.addEventListener('DOMContentLoaded', () => {
         isAiGenerating = false;
         currentAbortController = null;
         removeStreamingIndicator();
-        // 更新最终计数
-        const finalCount = els.resultList.children.length;
-        if (finalCount > 0) {
-          els.resultCount.textContent = `${finalCount} 条`;
+        if (streamedCount > 0) {
+          els.resultCount.textContent = `${streamedCount} 条`;
+        } else {
+          const finalCount = els.resultList.querySelectorAll('.result-item').length;
+          if (finalCount > 0) {
+            els.resultCount.textContent = `${finalCount} 条`;
+          }
         }
       }
     } else {
-      // 本地生成
       generateLocal(info);
     }
   }
@@ -499,13 +506,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // 刷新按钮（取消正在进行的流式生成，重新生成）
-  els.refreshBtn.addEventListener('click', () => {
+  els.refreshBtn.addEventListener('click', async () => {
+    if (!currentCompanyInfo) return;
     if (currentAbortController) {
       currentAbortController.abort();
+      // 等当前 generateAndDisplay 的 finally 跑完
+      await new Promise(r => setTimeout(r, 0));
     }
-    if (currentCompanyInfo) {
-      generateAndDisplay(currentCompanyInfo);
-    }
+    isAiGenerating = false;
+    currentAbortController = null;
+    await generateAndDisplay(currentCompanyInfo);
   });
 
   // 截图按钮
@@ -539,7 +549,6 @@ document.addEventListener('DOMContentLoaded', () => {
     showLoading(true);
     hideAllResults();
 
-    // 将粘贴的文本作为公司信息
     const info = {
       companyName: extractCompanyNameFromText(text),
       companyDesc: text.substring(0, 500),
@@ -554,10 +563,8 @@ document.addEventListener('DOMContentLoaded', () => {
       url: 'manual-input'
     };
 
-    setTimeout(() => {
-      handleExtractedInfo(info);
-      showLoading(false);
-    }, 500);
+    handleExtractedInfo(info);
+    showLoading(false);
   });
 
   // ============ 从截图视图去首页解析 ============
@@ -735,10 +742,12 @@ document.addEventListener('DOMContentLoaded', () => {
       baseUrl: els.aiBaseUrl.value.trim(),
       model: els.aiModel.value.trim(),
     };
+    const includeResume = !!(els.includeResume && els.includeResume.checked);
     await new Promise(resolve => {
-      chrome.storage.local.set({ aiConfig }, resolve);
+      chrome.storage.local.set({ aiConfig, includeResume }, resolve);
     });
 
+    AIService.invalidateContextCache();
     saveProfile();
     await updateAiStatus();
     switchView('main');
