@@ -10,8 +10,8 @@
 
 - 📋 **公司简介** — 自动识别当前招聘页面的公司信息
 - 📝 **岗位要求** — 提取职位描述中的关键需求
-- 📁 **skills/SKILL.md** — 你的个人能力档案（技术栈、学历、亮点经历）
-- 📁 **skills/RESUME.md** — 你的完整简历（可选，更丰富的人岗匹配上下文）
+- 📁 **skills/SKILL.md** — 你的个人能力档案（技术栈、学历、亮点经历；默认注入）
+- 📁 **skills/RESUME.md** — 你的完整简历（可选；设置页开启后才注入，并截断以省 token）
 - 📁 **rules/RULES.md** — 你对 AI 输出风格的约束规则 + 示例话术
 
 希望这个小工具能让你的求职之路轻松一点 🤝
@@ -21,12 +21,13 @@
 | 功能 | 说明 |
 |------|------|
 | 🔍 **智能识别** | 点击插件自动识别当前招聘页面的公司信息 |
-| 📸 **截图识别** | 支持截图后自动提取页面信息 |
+| 📸 **截图识别** | 支持截图 / 上传图片后用 Vision 提取信息并生成话术 |
 | 📋 **粘贴文本** | 支持手动粘贴公司介绍/职位描述 |
 | 🤖 **AI 增强** | 接入 OpenAI 兼容 API，生成更智能、个性化的话术 |
 | ⚡ **流式输出** | SSE 逐条展示话术，首条 ~1-2 秒即出，带打字动画 |
 | 🎯 **精准匹配** | 自动匹配你的技能与公司需求，靠前位置突出优势 |
-| ⚙️ **能力配置** | 设置你的技能标签、亮点描述、自定义模板 |
+| 📉 **按需上下文** | 默认只注入 SKILL + RULES；完整简历需在设置中勾选 |
+| ⚙️ **能力配置** | 设置技能标签、亮点、自定义模板、AI Key / 模型 |
 | 📝 **示例引导** | 从 `rules/RULES.md` 自动提取示例话术作为 few-shot 引导 |
 
 ## 🚀 安装方法
@@ -176,12 +177,12 @@ React, Vue3, TypeScript, Node.js, PostgreSQL
 
 1. 点击插件图标
 2. 点击右上角 ⚙️ 进入设置
-3. 添加你的 **技能标签**（如: React, Python, AI, Go...）
-4. 添加你的 **亮点描述**（如: 3年大厂经验, 有开源项目...）
-5. 可选：添加 **自定义模板**（支持占位符）
-6. 保存
+3. 填写 **API Key / API 地址 / 模型**（也可只改 `ai-config.js`）
+4. 按需勾选 **生成时注入完整简历**（更准、更耗 token；默认关闭）
+5. 添加 **技能标签**、**亮点描述**；可选 **自定义模板**
+6. 保存（会刷新 skills/rules 上下文缓存）
 
-> 💡 `skills/SKILL.md` 中填写的档案会作为 AI 的核心上下文，建议认真填写。
+> 💡 `skills/SKILL.md` 是 AI 的核心上下文，建议认真填写。`RESUME.md` 仅在勾选后注入（并截断）。
 
 ### 第二步：开启 AI 增强
 
@@ -192,16 +193,18 @@ React, Vue3, TypeScript, Node.js, PostgreSQL
 
 ### 第三步：生成话术
 
-1. 打开任意招聘网站的职位页面（BOSS直聘、拉勾、猎聘、智联等）
+1. 打开招聘网站的职位页面（BOSS直聘、拉勾、猎聘、智联等）
 2. 点击插件图标
-3. 点击 **🔍 识别页面信息**
+3. 点击 **🔍 识别信息**
 4. 查看生成的话术，点击即可复制
+
+> 页面已识别到公司名 + 职位时，不会再额外打一次「AI 提取页面信息」请求，直接生成话术。
 
 ### 其他方式
 
-- **📸 截图识别**：截取页面后粘贴文本识别
-- **📋 粘贴文本**：手动粘贴公司介绍或职位描述
-- **🔄 换一批**：刷新生成更多话术（会自动取消上一次正在进行的流式生成）
+- **📸 截图识别**：截取或上传图片 →「去首页解析」→ AI Vision 识别（需模型支持多模态）
+- **📋 粘贴文本**：手动粘贴公司介绍或职位描述后生成
+- **🔄 刷新**：重新生成；若上次流式生成未结束会先取消再开新一轮
 
 > 关闭 AI 开关后，将使用本地模板引擎生成话术，无需网络。
 
@@ -235,26 +238,28 @@ React, Vue3, TypeScript, Node.js, PostgreSQL
 **清除设置页覆盖的配置**（在 `chrome://extensions` 打开本扩展的 Service Worker 控制台）：
 
 ```js
-chrome.storage.local.remove('aiConfig')
+chrome.storage.local.remove(['aiConfig', 'includeResume'])
 ```
 
-执行后重新加载扩展，配置会回退到 `ai-config.js`。
+执行后重新加载扩展，配置会回退到 `ai-config.js`；「注入完整简历」也会恢复为默认关闭。
 
 ### 常见问题：401 Invalid API Key
 
 | 原因 | 解决办法 |
 |------|----------|
-| 设置页旧 Key 覆盖了 `ai-config.js` | 到设置页重新粘贴并保存，或执行上方 `remove('aiConfig')` |
+| 设置页旧 Key 覆盖了 `ai-config.js` | 到设置页重新粘贴并保存，或执行上方 `remove(['aiConfig', 'includeResume'])` |
 | API Key 复制不完整（多/少字符） | 从服务商控制台完整复制，注意首尾无空格 |
 | 改完 `ai-config.js` 未重载扩展 | 到 `chrome://extensions` 点击「重新加载」 |
 | Base URL 与协议不匹配 | OpenAI 兼容接口用 `.../v1`，Anthropic 兼容用服务商提供的 anthropic 地址 |
+| 话术缺少简历细节 | 确认已写 `skills/RESUME.md`，并在设置页勾选「生成时注入完整简历」后保存 |
 
 **AI 调用流程：**
 
 ```
-点击识别 → 抓取页面公司信息
-         → 读取 skills/SKILL.md + RESUME.md（个人档案，缓存 5 分钟）
-         → 读取 rules/RULES.md（输出规则 + 示例话术，缓存 5 分钟）
+点击识别 → DOM 抓取公司信息（必要时短重试）
+         → 若公司名/职位缺失，且 AI 已开启 → 可选：AI 从页面文本补全字段
+         → 读取 skills/SKILL.md + rules/RULES.md（缓存 5 分钟）
+         → 若设置开启「注入完整简历」→ 附加截断后的 RESUME.md
          → 组装 prompt（示例 few-shot + 个人档案 + 公司信息）
          → SSE 流式调用 AI API
          → 逐条返回话术（带打字动画）
@@ -262,13 +267,16 @@ chrome.storage.local.remove('aiConfig')
 
 ## 🛠 支持的招聘平台
 
+静态 content script 会预注入以下站点（识别更快）：
+
 - ✅ BOSS直聘 (zhipin.com)
 - ✅ 拉勾网 (lagou.com)
 - ✅ 猎聘 (liepin.com)
 - ✅ 智联招聘 (zhaopin.com)
 - ✅ 前程无忧 (51job.com)
 - ✅ 麦茬 (michaung.com)
-- ✅ 通用模式（自动适配其他平台）
+
+其他 HTTPS 页面仍可点「识别信息」：扩展会通过 `scripting.executeScript` 临时注入并走通用选择器兜底。
 
 ## ⚙️ 自定义模板
 
@@ -291,26 +299,24 @@ chrome.storage.local.remove('aiConfig')
 
 ```
 hire-helper/
-├── manifest.json        # Chrome 扩展配置 (Manifest V3)
-├── popup.html           # 弹窗界面（4 个视图）
-├── popup.css            # 弹窗样式（暗色主题）
-├── popup.js             # 弹窗逻辑（流式渲染）
-├── content.js           # 内容脚本（7 平台页面信息提取）
-├── background.js        # Service Worker
-├── generator.js         # 本地话术生成引擎
-├── ai-config.example.js # AI 配置示例（可复制为 ai-config.js）
-├── ai-config.js         # ⚠️ AI 配置（需手动创建，已 gitignore）
-├── ai-service.js        # AI 服务模块（流式 SSE + 缓存 + few-shot）
-├── skills/              # ⚠️ 个人能力档案（需手动创建，已 gitignore）
-│   ├── SKILL.md
-│   └── RESUME.md        # 可选，完整简历
-├── rules/               # ⚠️ AI 输出规则 + 示例话术（需手动创建，已 gitignore）
+├── manifest.json          # Chrome 扩展配置 (Manifest V3, v1.3.0)
+├── popup.html             # 弹窗界面（主界面 / 粘贴 / 截图 / 设置）
+├── popup.css              # 弹窗样式
+├── popup.js               # 弹窗逻辑（扫描、流式渲染、设置）
+├── content.js             # 内容脚本（招聘站 DOM 提取）
+├── background.js          # Service Worker（截图等）
+├── generator.js           # 本地话术生成引擎（AI 关闭或失败时）
+├── ai-config.example.js   # AI 配置示例（复制为 ai-config.js）
+├── ai-config.js           # ⚠️ AI 配置（需手动创建，已 gitignore）
+├── ai-service.js          # AI 服务（SSE / Vision / 缓存 / few-shot）
+├── skills/                # ⚠️ 个人能力档案（需手动创建，已 gitignore）
+│   ├── SKILL.md           # 默认注入
+│   └── RESUME.md          # 可选；设置页开启后注入
+├── rules/                 # ⚠️ AI 输出规则 + 示例（需手动创建，已 gitignore）
 │   └── RULES.md
-├── .gitignore
 ├── icons/
-│   ├── icon16.png
-│   ├── icon48.png
-│   └── icon128.png
+├── .gitignore
+├── CHANGELOG.md           # 版本更新日志
 └── README.md
 ```
 
@@ -342,33 +348,4 @@ hire-helper/
 
 ## 📝 更新日志
 
-### v1.3.0
-- ♻️ 抽取 AI 请求/prompt/JSON 解析公共层，降低重复
-- ⚡ 扫描去掉固定等待；公司名+职位齐全时跳过二次 AI 提取
-- 📉 完整简历默认不注入（设置页可开启，并截断）
-- 🔒 收窄 content_scripts 到招聘站；去掉 http host_permissions
-- 🐛 修复流式计数与刷新取消竞态；保存设置刷新上下文缓存
-- 📄 新增 `ai-config.example.js`
-
-### v1.2.0
-- ⚡ 新增 **SSE 流式输出**：AI 话术逐条展示，首条约 1-2 秒即出
-- 🎬 新增 **流式 loading 效果**：打字三点动画 + 计数 spinner
-- 📝 新增 **few-shot 示例引导**：自动从 `rules/RULES.md` 提取示例话术注入 prompt
-- 📁 新增 `skills/RESUME.md` 支持：完整简历作为补充上下文
-- ⚡ 新增 **上下文文件缓存**：skills/rules/resume 首次读取后缓存 5 分钟，后续调用 0ms
-- 🔄 新增 **取消生成**：刷新按钮可中断进行中的流式生成
-- ✏️ 优化 prompt 结构：去掉固定字数限制，改为参考示例风格；靠前位置突出优势匹配
-
-### v1.1.0
-- 🤖 新增 AI 增强模式（OpenAI 兼容接口）
-- 📁 新增 `skills/` 个人能力档案
-- 📁 新增 `rules/` AI 输出规则
-- ⚙️ 新增 AI 开关，支持 AI/本地模式切换
-- 🔄 AI 失败时自动降级到本地生成
-
-### v1.0.0
-- 🎉 初始版本
-- ✅ 支持 6 大招聘平台识别
-- ✅ 智能话术生成
-- ✅ 截图/粘贴文本识别
-- ✅ 技能标签、亮点描述、自定义模板配置
+完整版本记录见 [CHANGELOG.md](./CHANGELOG.md)。
