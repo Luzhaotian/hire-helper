@@ -807,6 +807,83 @@ body::-webkit-scrollbar-thumb {
   width: 100%;
 }
 
+/* ===== Setup Warning（启动自检） ===== */
+.setup-warning {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.setup-warning.level-error {
+  background: rgba(225, 112, 85, 0.1);
+  border-color: rgba(225, 112, 85, 0.4);
+}
+.setup-warning.level-warn {
+  background: rgba(253, 203, 110, 0.1);
+  border-color: rgba(253, 203, 110, 0.4);
+}
+
+.setup-warning-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.setup-warning-title {
+  font-weight: 600;
+}
+.level-error .setup-warning-title { color: var(--danger); }
+.level-warn .setup-warning-title { color: var(--warning); }
+
+.setup-warning-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 6px;
+  color: var(--text);
+}
+.setup-warning-list li {
+  position: relative;
+  padding: 2px 0 2px 12px;
+}
+.setup-warning-list li::before {
+  content: '·';
+  position: absolute;
+  left: 2px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+.setup-warning-list code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: var(--primary-light);
+}
+
+.setup-warning-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.setup-warning-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--primary-light);
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.setup-warning-link:hover {
+  color: var(--text-bright);
+}
+
 /* ===== AI Toggle Bar ===== */
 .ai-toggle-bar {
   display: flex;

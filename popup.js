@@ -21,6 +21,11 @@ document.addEventListener('DOMContentLoaded', () => {
     aiBaseUrl: $('#aiBaseUrl'),
     aiModel: $('#aiModel'),
     includeResume: $('#includeResume'),
+    setupWarning: $('#setupWarning'),
+    setupWarningTitle: $('#setupWarningTitle'),
+    setupWarningList: $('#setupWarningList'),
+    setupWarningHint: $('#setupWarningHint'),
+    setupWarningAction: $('#setupWarningAction'),
     scanBtn: $('#scanBtn'),
     screenshotBtn: $('#screenshotBtn'),
     pasteBtn: $('#pasteBtn'),
@@ -142,17 +147,19 @@ document.addEventListener('DOMContentLoaded', () => {
         els.aiEnabled.checked = false;
         chrome.storage.local.set({ aiEnabled: false });
       }
+      runSetupCheck();
     });
 
     // 加载 AI 开关状态
-    chrome.storage.local.get('aiEnabled', async (result) => {
-      if (result.aiEnabled) {
-        const configured = await AIService.isConfigured();
-        if (configured) {
-          els.aiEnabled.checked = true;
-        }
-      }
+    const stored = await new Promise(resolve => {
+      chrome.storage.local.get('aiEnabled', resolve);
     });
+    if (stored.aiEnabled && await AIService.isConfigured()) {
+      els.aiEnabled.checked = true;
+    }
+
+    // 开关状态就位后再自检，否则分级会读到未初始化的开关
+    runSetupCheck();
   }
 
   async function updateAiStatus() {
@@ -165,6 +172,62 @@ document.addEventListener('DOMContentLoaded', () => {
       els.aiStatus.className = 'ai-status-badge';
     }
   }
+
+  // ============ 启动自检 ============
+  /**
+   * ai-config.js / skills/ / rules/ 都被 gitignore，克隆后缺失时 AI 仍会"成功"生成，
+   * 只是丢掉了个人档案与风格约束且毫无提示。这里把真实状态显式渲染出来。
+   */
+  async function runSetupCheck() {
+    const { config, context } = await AIService.diagnose();
+    const problems = [];
+
+    if (config.isPlaceholder) {
+      problems.push(config.keySource === 'storage'
+        ? '设置页里保存的是模板占位 Key，请替换为真实 API Key'
+        : '<code>ai-config.js</code> 里仍是模板占位 Key，请替换为真实 API Key');
+    } else if (!config.usable) {
+      problems.push('未配置 API Key —— 可复制 <code>ai-config.example.js</code> 为 <code>ai-config.js</code>，或在设置页填写');
+    }
+
+    if (!context.skills) {
+      problems.push('缺少 <code>skills/SKILL.md</code> —— 个人能力档案，AI 无法体现你的经历');
+    }
+    if (!context.rules) {
+      problems.push('缺少 <code>rules/RULES.md</code> —— 输出规则与示例话术，AI 风格不受约束');
+    } else if (context.examples === 0) {
+      problems.push('<code>rules/RULES.md</code> 里没有「## 示例」区块，few-shot 引导未生效');
+    }
+
+    // 勾了注入简历却没有简历文件，选项会静默失效
+    if (config.includeResume && !context.resume) {
+      problems.push('已勾选「注入完整简历」，但 <code>skills/RESUME.md</code> 不存在，该选项不会生效');
+    }
+
+    if (problems.length === 0) {
+      els.setupWarning.classList.add('hidden');
+      return;
+    }
+
+    const keyBroken = config.isPlaceholder || !config.usable;
+    // 只有用户确实打开了 AI 增强，缺 Key 才算阻塞性问题
+    const level = (keyBroken && els.aiEnabled.checked) ? 'level-error' : 'level-warn';
+
+    els.setupWarning.classList.remove('level-error', 'level-warn');
+    els.setupWarning.classList.add(level);
+    els.setupWarning.classList.remove('hidden');
+
+    els.setupWarningTitle.textContent = keyBroken ? '⚠️ AI 未就绪' : '⚠️ 个人档案未加载';
+    els.setupWarningList.innerHTML = problems.map(p => `<li>${p}</li>`).join('');
+    els.setupWarningHint.textContent = keyBroken
+      ? '本地模板引擎仍可正常使用，无需联网。'
+      : 'AI 仍能生成话术，但不会带上你的经历与风格约束，输出质量会明显下降。';
+
+    // 缺 Key 能在应用内修复；缺文件必须手动创建
+    els.setupWarningAction.classList.toggle('hidden', !keyBroken);
+  }
+
+  els.setupWarningAction.addEventListener('click', () => switchView('settings'));
 
   // ============ 渲染 Tags ============
   function renderTags(container, items, onRemove) {
@@ -750,6 +813,7 @@ document.addEventListener('DOMContentLoaded', () => {
     AIService.invalidateContextCache();
     saveProfile();
     await updateAiStatus();
+    await runSetupCheck();
     switchView('main');
   });
 

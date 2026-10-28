@@ -15,6 +15,16 @@
       <button id="settingsBtn" class="icon-btn" title="设置">⚙️</button>
     </header>
 
+    <!-- 启动自检警告：缺 ai-config.js / skills / rules 时显示 -->
+    <div id="setupWarning" class="setup-warning hidden">
+      <div class="setup-warning-head">
+        <span id="setupWarningTitle" class="setup-warning-title"></span>
+        <button id="setupWarningAction" class="setup-warning-link hidden">去设置</button>
+      </div>
+      <ul id="setupWarningList" class="setup-warning-list"></ul>
+      <p id="setupWarningHint" class="setup-warning-hint"></p>
+    </div>
+
     <!-- AI 开关 -->
     <div id="aiToggle" class="ai-toggle-bar">
       <div class="ai-toggle-info">

@@ -7,7 +7,7 @@
 const AIService = (() => {
 
   // ===== 上下文文件缓存（skills/rules/resume/examples） =====
-  let _contextCache = null;     // { skills, resume, rules, examples }
+  let _contextCache = null;     // { skills, resume, rules, examples, present }
   let _contextCacheTime = 0;
   const CONTEXT_CACHE_TTL = 5 * 60 * 1000; // 5 分钟自动过期
   const DEFAULT_RESUME_MAX_CHARS = 2500;
@@ -38,35 +38,52 @@ const AIService = (() => {
   }
 
   /**
+   * 判断是否为示例模板里的占位 Key
+   * ai-config.example.js 的 "sk-xxx" 和 README 模板的 "sk-your-api-key-here"
+   * 都是非空字符串，会让 isConfigured() 误判为已配置，直到首次请求才 401
+   * @param {string} key
+   * @returns {boolean}
+   */
+  function isPlaceholderKey(key) {
+    const k = (key || '').trim();
+    if (!k) return false;
+    return /^<.*>$/.test(k)                     // <your-api-key>
+      || /^x{3,}$/i.test(k)                     // xxx
+      || /^sk-x{3,}$/i.test(k)                  // sk-xxx
+      || /your[-_]?api[-_]?key/i.test(k)        // sk-your-api-key-here
+      || /placeholder|changeme|todo|待填/i.test(k);
+  }
+
+  /**
    * 检查 AI 配置是否可用
+   * 占位 Key 视为未配置，避免徽章显示「已配置」却在首次请求时 401
    * @returns {Promise<boolean>}
    */
   async function isConfigured() {
     const config = await getConfig();
-    return config.apiKey && config.apiKey.length > 0;
+    return !!config.apiKey && !isPlaceholderKey(config.apiKey);
   }
 
   /**
-   * 读取扩展内的文本文件
+   * 探测扩展内的文本文件
    * @param {string} path - 相对于扩展根目录的路径
-   * @returns {Promise<string>} 文件内容，失败返回空字符串
+   * @returns {Promise<string|null>} 文件内容；不存在或读取失败返回 null，
+   *   以便与「文件存在但内容为空」区分开
    */
-  async function readFile(path) {
+  async function probeFile(path) {
     try {
-      const url = chrome.runtime.getURL(path);
-      const resp = await fetch(url);
-      if (!resp.ok) return '';
+      const resp = await fetch(chrome.runtime.getURL(path));
+      if (!resp.ok) return null;
       return await resp.text();
     } catch (e) {
-      console.warn(`读取 ${path} 失败:`, e);
-      return '';
+      return null;
     }
   }
 
   /**
    * 从 skills/ 和 rules/ 文件夹加载上下文文件
    * 自动缓存处理后的结果，5 分钟过期或调用 invalidateContextCache() 清除
-   * @returns {Promise<{skills: string, resume: string, rules: string, examples: string[]}>}
+   * @returns {Promise<{skills: string, resume: string, rules: string, examples: string[], present: Object}>}
    */
   async function loadContextFiles() {
     const now = Date.now();
@@ -75,16 +92,21 @@ const AIService = (() => {
     }
 
     const [skillsContent, resumeContent, rulesContent] = await Promise.all([
-      readFile('skills/SKILL.md'),
-      readFile('skills/RESUME.md'),
-      readFile('rules/RULES.md')
+      probeFile('skills/SKILL.md'),
+      probeFile('skills/RESUME.md'),
+      probeFile('rules/RULES.md')
     ]);
 
     _contextCache = {
       skills:    extractUsefulContent(skillsContent),
       resume:    extractUsefulContent(resumeContent),
       rules:     extractUsefulContent(rulesContent),
-      examples:  extractExamples(rulesContent)
+      examples:  extractExamples(rulesContent),
+      present: {
+        skills: !!skillsContent && skillsContent.trim() !== '',
+        resume: !!resumeContent && resumeContent.trim() !== '',
+        rules:  !!rulesContent && rulesContent.trim() !== ''
+      }
     };
     _contextCacheTime = now;
     return _contextCache;
@@ -96,6 +118,46 @@ const AIService = (() => {
   function invalidateContextCache() {
     _contextCache = null;
     _contextCacheTime = 0;
+  }
+
+  /**
+   * 体检：检查 AI 配置与上下文文件是否齐备
+   * ai-config.js / skills/ / rules/ 都被 gitignore，克隆后缺失只会静默降级，
+   * 这里把真实状态暴露出来供 popup 渲染警告
+   * @returns {Promise<{config: Object, context: Object}>}
+   */
+  async function diagnose() {
+    const fileConfig = (typeof AI_CONFIG !== 'undefined') ? AI_CONFIG : {};
+    const stored = await new Promise(resolve => {
+      chrome.storage.local.get(['aiConfig', 'includeResume'], result => resolve(result));
+    });
+    const aiStored = stored.aiConfig || {};
+
+    const [context, configFileRaw] = await Promise.all([
+      loadContextFiles(),
+      probeFile('ai-config.js')
+    ]);
+
+    const keyInFile = (fileConfig.apiKey || '').trim();
+    const keyInStorage = (aiStored.apiKey || '').trim();
+    // 与 getConfig() 保持一致的优先级：设置页覆盖文件
+    const activeKey = keyInStorage || keyInFile;
+
+    return {
+      config: {
+        fileExists: configFileRaw !== null,
+        keySource: keyInStorage ? 'storage' : (keyInFile ? 'file' : null),
+        isPlaceholder: isPlaceholderKey(activeKey),
+        usable: !!activeKey && !isPlaceholderKey(activeKey),
+        includeResume: stored.includeResume === true
+      },
+      context: {
+        skills: context.present.skills,
+        resume: context.present.resume,
+        rules: context.present.rules,
+        examples: context.examples.length
+      }
+    };
   }
 
   /**
@@ -712,6 +774,7 @@ ${text}`;
     generate,
     generateStream,
     getConfig,
+    diagnose,
     analyzeImage,
     extractInfoFromText,
     invalidateContextCache

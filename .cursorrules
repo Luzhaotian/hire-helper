@@ -1,0 +1,46 @@
+# Git Commit Message
+
+撰写或建议 git commit message 时，严格遵循以下规范。
+
+## 格式
+
+```
+<type>(<scope>): <subject>
+
+[optional body]
+```
+
+- `type` 必填，`scope` 可选，`subject` 必填
+- 首行不超过 72 字符；正文每行不超过 100 字符
+- subject 使用祈使语气，说明「为什么」而非罗列「改了什么文件」
+- 不加句号；中英文均可，同一仓库内保持风格一致（本仓库优先中文 subject）
+
+## Type
+
+| type | 用途 |
+|------|------|
+| feat | 新功能 |
+| fix | Bug 修复 |
+| docs | 文档 |
+| style | 格式（不影响逻辑） |
+| refactor | 重构（非 feat/fix） |
+| perf | 性能优化 |
+| chore | 构建/工具/杂项 |
+| revert | 回滚 |
+
+## 示例
+
+```
+feat: 支持流式生成与上下文缓存
+fix: 修复流式计数与刷新取消的竞态
+docs: 补充 CHANGELOG 与 AI 配置说明
+refactor(ai): 抽取请求与 JSON 解析公共层
+perf: 扫描在字段齐全时跳过二次 AI 提取
+```
+
+## 禁止
+
+- 模糊描述：`update`、`fix bug`、`提交代码`、`wip`
+- 堆砌文件清单或实现细节作为 subject
+- 一条 commit 混入无关改动的笼统概括
+- 在未明确要求时擅自执行 `git commit` / `git push`
